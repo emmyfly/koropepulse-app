@@ -3,6 +3,10 @@
 Real-time shuttle visibility for UNILAG's on-campus transit network. Built for WEMA
 Hackaholics 7.0 and the UNILAG SEES Hackathon.
 
+**Live:** [koropepulse-app.vercel.app](https://koropepulse-app.vercel.app) (frontend,
+installable PWA) · [koropepulse-backend-production.up.railway.app](https://koropepulse-backend-production.up.railway.app/docs)
+(backend API docs)
+
 **The problem:** UNILAG's shuttle system has no centralized visibility. Students queue
 blind with no idea when a shuttle is coming — and for the two off-campus terminals this
 isn't just an inconvenience: Bariga and Yaba are not safe places to stand around waiting
@@ -316,11 +320,15 @@ build.
 
 ## Deployment
 
-- **Backend:** `backend/Dockerfile` builds a self-contained image (trains the model at
-  build time, then serves with uvicorn). Works on Render, Railway, Fly.io, or anywhere
-  else that runs a container on `$PORT`/`8000`.
-- **Frontend:** `npm run build` in `frontend/` produces a static `dist/` bundle with no
-  extra config — deployable to GitHub Pages, Vercel, or Netlify directly.
+Both are actually deployed (see the links at the top), not just "deployable":
+
+- **Backend:** live on Railway, built from `backend/Dockerfile` (trains the model at
+  build time, then serves with uvicorn). The `CMD` uses shell-form `${PORT:-8000}` so it
+  binds to whatever port the host assigns, not a hardcoded one — this matters on Railway/
+  Render/Fly, which all route to a dynamically assigned `$PORT`, not always 8000.
+- **Frontend:** live on Vercel, built with `npm run build` (static `dist/` bundle, zero
+  extra config beyond environment variables). Equally deployable to GitHub Pages or
+  Netlify the same way.
 - **CI:** `.github/workflows/ci.yml` lints and tests both frontend (`npm run lint`,
   `npm run test`, `npm run build`) and backend (`pytest`, after training the model) on
   every push/PR to `main`.
