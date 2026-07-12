@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { verifyDriver, ApiError, type VerifyDriverResponse } from '../../api/backend';
-import { checkIn } from '../../services/shuttleService';
+import { checkIn, checkOut } from '../../services/shuttleService';
 import { ROUTES, routeName, stopName, otherStop } from '../../config/routes';
 import type { Route, ShuttleStatus } from '../../types';
 
@@ -44,6 +44,13 @@ export function CheckIn() {
   }
 
   function handleLogout() {
+    if (driver && route && status) {
+      // Best-effort: end-of-day sign-out should clear the driver's live
+      // "arrived" status immediately so it stops showing on the commuter
+      // view, but a failed cleanup shouldn't block signing out. Only
+      // needed if they actually checked in — nothing to clear otherwise.
+      checkOut(route.id, driver.driver_id).catch(() => {});
+    }
     setDriver(null);
     setRoute(null);
     setStatus(null);

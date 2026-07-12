@@ -1,4 +1,4 @@
-import { onValue, ref, serverTimestamp, set } from 'firebase/database';
+import { onValue, ref, remove, serverTimestamp, set } from 'firebase/database';
 import { db, ensureSignedIn } from '../firebase';
 import { stopById } from '../config/routes';
 import { getCurrentPosition, verifyArrival } from '../utils/geo';
@@ -65,4 +65,14 @@ export async function checkIn(
   });
 
   return status;
+}
+
+/**
+ * Signing out ends the driver's day — their bus should disappear from the
+ * commuter view immediately, not linger showing "arrived" indefinitely.
+ * Removes the live status only; checkinLogs stays as historical record.
+ */
+export async function checkOut(routeId: string, driverId: string): Promise<void> {
+  if (!db) return;
+  await remove(ref(db, `shuttles/${routeId}/${driverId}`));
 }

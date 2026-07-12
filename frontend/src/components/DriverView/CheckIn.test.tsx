@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CheckIn } from './CheckIn';
 import { ApiError, verifyDriver } from '../../api/backend';
-import { checkIn } from '../../services/shuttleService';
+import { checkIn, checkOut } from '../../services/shuttleService';
 
 vi.mock('../../api/backend', async () => {
   const actual = await vi.importActual<typeof import('../../api/backend')>('../../api/backend');
@@ -12,10 +12,12 @@ vi.mock('../../api/backend', async () => {
 
 vi.mock('../../services/shuttleService', () => ({
   checkIn: vi.fn(),
+  checkOut: vi.fn(),
 }));
 
 const mockVerifyDriver = vi.mocked(verifyDriver);
 const mockCheckIn = vi.mocked(checkIn);
+const mockCheckOut = vi.mocked(checkOut);
 
 async function signIn(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByLabelText(/phone number/i), '08031234567');
@@ -32,6 +34,8 @@ describe('CheckIn', () => {
   beforeEach(() => {
     mockVerifyDriver.mockReset();
     mockCheckIn.mockReset();
+    mockCheckOut.mockReset();
+    mockCheckOut.mockResolvedValue(undefined);
   });
 
   it('shows the sign-in form by default', () => {
@@ -147,5 +151,38 @@ describe('CheckIn', () => {
       expect(mockCheckIn).toHaveBeenCalledWith('cits-bariga', 'driver-001', 'cits', 'on_route'),
     );
     expect(await screen.findByRole('button', { name: /arrived at bariga/i })).toBeInTheDocument();
+  });
+
+  it('clears the live shuttle status when a checked-in driver signs out', async () => {
+    mockVerifyDriver.mockResolvedValue({ driver_id: 'driver-001', name: 'Tunde Balogun' });
+    mockCheckIn.mockResolvedValueOnce({
+      routeId: 'cits-bariga',
+      driverId: 'driver-001',
+      currentStop: 'cits',
+      state: 'arrived',
+      updatedAt: Date.now(),
+    });
+    const user = userEvent.setup();
+    render(<CheckIn />);
+
+    await signInAndPickRoute(user);
+    await user.click(screen.getByRole('button', { name: 'CITS' }));
+    await screen.findByText(/arrived at cits/i);
+
+    await user.click(screen.getByRole('button', { name: /sign out/i }));
+
+    expect(mockCheckOut).toHaveBeenCalledWith('cits-bariga', 'driver-001');
+    expect(screen.getByLabelText(/phone number/i)).toBeInTheDocument();
+  });
+
+  it('does not attempt to clear a status that was never checked in', async () => {
+    mockVerifyDriver.mockResolvedValue({ driver_id: 'driver-001', name: 'Tunde Balogun' });
+    const user = userEvent.setup();
+    render(<CheckIn />);
+
+    await signInAndPickRoute(user);
+    await user.click(screen.getByRole('button', { name: /sign out/i }));
+
+    expect(mockCheckOut).not.toHaveBeenCalled();
   });
 });
