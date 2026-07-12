@@ -1,0 +1,1 @@
+STOPS = ["CITS", "Bariga", "Yaba"]

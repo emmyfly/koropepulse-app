@@ -1,0 +1,20 @@
+[
+  {
+    "driver_id": "driver-001",
+    "name": "Tunde Balogun",
+    "phone": "08031234567",
+    "pin_hash": "f813f70afbfc59348f51ad8c71ce133fb18d0f45f0bfd471c2d7880f582406d7"
+  },
+  {
+    "driver_id": "driver-002",
+    "name": "Aisha Bello",
+    "phone": "08059876543",
+    "pin_hash": "b16c6ef383e4cc3e42eb5819ea2e6e35c1d700db0c7c370776931080d886948a"
+  },
+  {
+    "driver_id": "driver-003",
+    "name": "Chidi Okafor",
+    "phone": "08123456789",
+    "pin_hash": "47452ce2b3a10d7f91656d9ea56508fb52845296ebe67efe720c551554c65725"
+  }
+]

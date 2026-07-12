@@ -1,0 +1,24 @@
+{
+  "rules": {
+    "shuttles": {
+      ".read": true,
+      "$routeId": {
+        "$driverId": {
+          ".write": "auth != null"
+        }
+      }
+    },
+    "drivers": {
+      ".read": false,
+      ".write": false
+    },
+    "checkinLogs": {
+      "$routeId": {
+        ".read": true,
+        "$logId": {
+          ".write": "auth != null"
+        }
+      }
+    }
+  }
+}
