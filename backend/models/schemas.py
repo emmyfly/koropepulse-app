@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -46,9 +46,25 @@ class DriverVerifyRequest(BaseModel):
         return cleaned
 
 
+class DriverPhoneVerifyRequest(BaseModel):
+    id_token: str = Field(
+        ...,
+        min_length=1,
+        description="Firebase ID token from a completed Phone Auth (SMS OTP) sign-in.",
+    )
+
+
 class DriverVerifyResponse(BaseModel):
     driver_id: str
     name: str
+    custom_token: Optional[str] = Field(
+        default=None,
+        description=(
+            "Firebase custom auth token scoped to this driver's UID, for "
+            "signInWithCustomToken. Null if Firebase Admin isn't configured "
+            "on the backend — frontend should fall back to signInAnonymously."
+        ),
+    )
 
 
 class HealthResponse(BaseModel):

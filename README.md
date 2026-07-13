@@ -167,7 +167,7 @@ uvicorn main:app --reload
 ```
 
 ```bash
-pytest   # 11 tests covering /predict/eta and /drivers/verify
+pytest   # 33 tests: /predict/eta, /drivers/verify(-phone), and the real-data derivation
 ```
 
 The API is available at `http://localhost:8000`, interactive docs at
@@ -208,10 +208,49 @@ detail. If the model hasn't been trained yet (`data/model.joblib` missing), retu
 { "phone": "08031234567", "pin": "1234" }
 
 // Response (200)
-{ "driver_id": "driver-001", "name": "Tunde Balogun" }
+{ "driver_id": "driver-001", "name": "Tunde Balogun", "custom_token": null }
 
 // Wrong phone/PIN -> 401. Malformed PIN (not exactly 4 digits) -> 422.
+// 5 failed attempts for the same phone number within 15 minutes -> 429,
+// with a Retry-After header (in seconds). Resets on a successful verify.
 ```
+
+`custom_token` is a Firebase custom auth token scoped to the driver's UID, for
+`signInWithCustomToken` on the frontend — see
+[Firebase security rules](#firebase-security-rules). It's `null` whenever Firebase Admin
+credentials aren't configured on the backend (the default — this is best-effort, not
+required to verify a driver).
+
+### `POST /drivers/verify-phone`
+
+A stronger alternative identity check for a driver who has completed Firebase Phone Auth
+(SMS OTP) on the frontend, closing a real gap the PIN path can't: `/verify` only proves
+someone *knows* a phone+PIN, not that they *have* the driver's actual phone. A verified
+Firebase ID token is cryptographic proof of the latter — nobody gets one without actually
+receiving and entering the SMS code.
+
+```jsonc
+// Request
+{ "id_token": "<Firebase ID token from a completed Phone Auth sign-in>" }
+
+// Response (200) — same shape as /verify
+{ "driver_id": "driver-001", "name": "Tunde Balogun", "custom_token": null }
+
+// Invalid/expired token, or not a phone sign-in -> 401.
+// Valid token but phone isn't a registered driver -> 401.
+// Firebase Admin not configured on the backend -> 503 (this endpoint has no PIN
+// fallback, unlike custom_token minting, so it hard-fails instead of degrading).
+// 10 requests from the same IP within 5 minutes -> 429 with Retry-After.
+```
+
+Fully built and tested standalone (`backend/tests/test_phone.py`,
+`backend/tests/test_verify_phone.py`), but **inert in production today** — nothing calls
+it yet. Landing it end-to-end still needs, together: enabling the Phone provider (and the
+Blaze pay-as-you-go plan) in the Firebase console, the frontend integrating the Firebase
+Phone Auth SDK + reCAPTCHA to obtain an `id_token`, and a "trusted device" concept so this
+OTP flow only gates new/unrecognized devices rather than every daily sign-in — routine
+returning sign-ins keep using the fast `/verify` PIN path. Same "both sides land together"
+situation as the custom-token/RTDB-rules gap below.
 
 ### `GET /health`
 
@@ -248,18 +287,36 @@ field reads from.
 
 ### The path to real data
 
-`backend/data/real_field_data_template.csv` defines the exact schema for real BRT
-observation data once someone stands at a terminal with a clipboard (or an app) and logs
-it. Once that file has real rows:
+Two sources feed real training rows into the same pipeline:
+
+**1. Live driver check-ins (automatic, no clipboard needed).** Every check-in already
+writes a permanent history entry to Firebase (`checkinLogs/{routeId}/{logId}`, written by
+`frontend/src/services/shuttleService.ts`, kept even after the live status is cleared on
+sign-out). `backend/data/derive_real_data.py` reads that history back out, computes
+`headway_minutes` as the gap between consecutive `arrived` events at the same stop, and
+writes a CSV in the same schema `train_model.py` expects:
 
 ```bash
-python data/retrain.py path/to/real_observations.csv
+python data/derive_real_data.py        # writes data/derived_real_data.csv
+python data/retrain.py data/derived_real_data.csv
 ```
 
-This retrains the identical pipeline and overwrites `model.joblib` and
+Honest limitation: check-ins don't currently capture `weather_flag` or `queue_count`, so
+both are written as `0`/`False` for every derived row — real data will only ever teach the
+model a headway-driven wait time until the check-in UI captures those two signals too.
+Requires Firebase Admin credentials (`FIREBASE_DATABASE_URL` +
+`FIREBASE_SERVICE_ACCOUNT_JSON` or `GOOGLE_APPLICATION_CREDENTIALS`, see `.env.example`)
+— not needed to run the API itself, only to retrain against real history.
+
+**2. Hand-logged field observations.** `backend/data/real_field_data_template.csv` defines
+the same schema for someone standing at a terminal with a clipboard, which can still
+capture `weather_flag` and `queue_count` directly. Point `retrain.py` at that file the same
+way once it has real rows.
+
+Either way, this retrains the identical pipeline and overwrites `model.joblib` and
 `model_metadata.json` — `/predict/eta` starts returning `confidence:
-"real_data_informed"` automatically, no code changes needed. This is the actual
-roadmap mechanism, not just a README aspiration.
+"real_data_informed"` automatically, no code changes needed. This is an actual mechanism,
+not just a README aspiration.
 
 ## Firebase security rules
 
@@ -312,11 +369,19 @@ there's no "wrong route" to spoof anymore, only identity. This is a real but
 low-severity gap for an MVP — the threat model here is "don't let a random visitor write
 garbage," not "defend against someone deliberately crafting raw database calls."
 
-The natural hardening step — binding a write to the verified driver's identity at the
-database rules level too, via Firebase custom auth tokens minted by the backend after PIN
-verification (`auth.uid === $driverId`) — is a known next step, deliberately deferred to
-avoid requiring a Firebase Admin service account in the backend deployment for this
-build.
+**Half-built as of the latest backend pass:** `/drivers/verify` now mints a Firebase
+custom auth token (`custom_token` in the response, scoped `uid = driver_id`) via
+`backend/services/firebase_auth.py`, whenever Firebase Admin credentials are configured
+(see `.env.example`) — best-effort, `null` otherwise, so a missing credential degrades
+gracefully instead of blocking driver sign-in. What's deliberately *not* done yet: the
+frontend still calls `signInAnonymously` instead of `signInWithCustomToken`, and the rules
+above still say `auth != null` instead of `auth.uid === $driverId`. Both sides of that
+switch have to land in the same change — flipping the rules first would break every
+current driver check-in (anonymous UIDs don't match any `driverId`), and there's no point
+wiring the frontend to a token the rules don't yet require. Also note the PIN endpoint
+itself now has brute-force protection independent of this token work: 5 failed attempts
+for the same phone number within 15 minutes returns `429` with a `Retry-After` header
+(`backend/services/driver_store.py`), resetting on the next successful verify.
 
 ## Deployment
 
@@ -346,15 +411,21 @@ Firebase SDK's job) — when Firebase is unreachable, `ConnectionBanner` shows a
 Kept here instead of left as a vague aspiration, so it's clear what's deliberately out
 of scope for this build and why:
 
-- **Custom-token route authorization** — see the honest gap noted in
-  [Firebase security rules](#firebase-security-rules) above.
+- **Custom-token write authorization (half-built)** — backend now mints the token on
+  every successful `/drivers/verify`; frontend adopting `signInWithCustomToken` and
+  tightening the rules to `auth.uid === $driverId` is the remaining, deliberately deferred
+  half. See [Firebase security rules](#firebase-security-rules) above for why both sides
+  have to switch together.
 - **Always-on GPS tracking** — see the note in
   [GPS arrival verification](#gps-arrival-verification) above.
-- **Supabase (Postgres) as a durable historical store**, separate from Firebase's live
-  ephemeral state. Every check-in already carries everything `retrain.py` needs (stop,
-  time, GPS verification); a Postgres table accumulating that history is a strictly
-  better real-data source than a manually-filled CSV, and doesn't touch the live path —
-  it's a parallel write, not a dependency of the commuter/driver flow.
+- ~~Supabase (Postgres) as a durable historical store~~ — **built, via Firebase instead of
+  Postgres.** `checkinLogs/{routeId}/{logId}` was already a durable, parallel write (never
+  cleared on sign-out, unlike live `shuttles/` status), so no new infra was needed —
+  `backend/data/derive_real_data.py` reads it directly. See
+  [The path to real data](#the-path-to-real-data). What's still missing: `weather_flag`
+  and `queue_count` aren't captured at check-in time, so derived real rows can't teach the
+  model a weather or queue-length effect yet — capturing those two signals in the
+  check-in UI is the next real step here, not a Postgres migration.
 - **A coordinator + specialist agent pipeline** for cross-route dispatch — this build
   answers "where's my bus" (single-route ETA), not "how should drivers rebalance across
   routes" (the bunching/gaps half of the original problem statement). A future
