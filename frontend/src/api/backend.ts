@@ -3,6 +3,7 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000
 export interface VerifyDriverResponse {
   driver_id: string;
   name: string;
+  custom_token: string | null;
 }
 
 export class ApiError extends Error {
@@ -30,6 +31,26 @@ export async function verifyDriver(phone: string, pin: string): Promise<VerifyDr
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     throw new ApiError(body.detail ?? 'Phone number or PIN is incorrect.', response.status);
+  }
+
+  return response.json();
+}
+
+export async function verifyDriverPhone(idToken: string): Promise<VerifyDriverResponse> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}/drivers/verify-phone`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id_token: idToken }),
+    });
+  } catch {
+    throw new ApiError('Cannot reach the verification service. Check your connection and try again.');
+  }
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new ApiError(body.detail ?? 'Could not verify this phone number.', response.status);
   }
 
   return response.json();

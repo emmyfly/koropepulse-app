@@ -7,12 +7,25 @@ import { checkIn, checkOut } from '../../services/shuttleService';
 
 vi.mock('../../api/backend', async () => {
   const actual = await vi.importActual<typeof import('../../api/backend')>('../../api/backend');
-  return { ...actual, verifyDriver: vi.fn() };
+  return { ...actual, verifyDriver: vi.fn(), verifyDriverPhone: vi.fn() };
 });
 
 vi.mock('../../services/shuttleService', () => ({
   checkIn: vi.fn(),
   checkOut: vi.fn(),
+}));
+
+// PHONE_AUTH_ENABLED defaults false (no VITE_PHONE_AUTH_ENABLED in test env),
+// so handleLogin never reaches these -- mocked defensively so no real
+// Firebase SDK code executes even though it isn't currently reachable here.
+// See CheckIn.otp.test.tsx for the flag-enabled behavior.
+vi.mock('../../services/phoneAuth', () => ({
+  sendOtp: vi.fn(),
+  resetRecaptcha: vi.fn(),
+}));
+
+vi.mock('../../firebase', () => ({
+  signInAsDriver: vi.fn().mockResolvedValue(null),
 }));
 
 const mockVerifyDriver = vi.mocked(verifyDriver);
@@ -32,6 +45,7 @@ async function signInAndPickRoute(user: ReturnType<typeof userEvent.setup>) {
 
 describe('CheckIn', () => {
   beforeEach(() => {
+    localStorage.clear();
     mockVerifyDriver.mockReset();
     mockCheckIn.mockReset();
     mockCheckOut.mockReset();
@@ -45,7 +59,7 @@ describe('CheckIn', () => {
   });
 
   it('lets the driver choose which route they are driving today after verifying', async () => {
-    mockVerifyDriver.mockResolvedValue({ driver_id: 'driver-001', name: 'Tunde Balogun' });
+    mockVerifyDriver.mockResolvedValue({ driver_id: 'driver-001', name: 'Tunde Balogun', custom_token: null });
     const user = userEvent.setup();
     render(<CheckIn />);
 
@@ -68,7 +82,7 @@ describe('CheckIn', () => {
   });
 
   it('lets the driver choose a starting stop once a route is picked', async () => {
-    mockVerifyDriver.mockResolvedValue({ driver_id: 'driver-001', name: 'Tunde Balogun' });
+    mockVerifyDriver.mockResolvedValue({ driver_id: 'driver-001', name: 'Tunde Balogun', custom_token: null });
     const user = userEvent.setup();
     render(<CheckIn />);
 
@@ -80,7 +94,7 @@ describe('CheckIn', () => {
   });
 
   it('checks in as arrived at the chosen starting stop, then offers the on-route toggle', async () => {
-    mockVerifyDriver.mockResolvedValue({ driver_id: 'driver-001', name: 'Tunde Balogun' });
+    mockVerifyDriver.mockResolvedValue({ driver_id: 'driver-001', name: 'Tunde Balogun', custom_token: null });
     mockCheckIn.mockResolvedValueOnce({
       routeId: 'cits-bariga',
       driverId: 'driver-001',
@@ -103,7 +117,7 @@ describe('CheckIn', () => {
   });
 
   it('does not block the check-in when GPS is unverified or unavailable', async () => {
-    mockVerifyDriver.mockResolvedValue({ driver_id: 'driver-001', name: 'Tunde Balogun' });
+    mockVerifyDriver.mockResolvedValue({ driver_id: 'driver-001', name: 'Tunde Balogun', custom_token: null });
     mockCheckIn.mockResolvedValueOnce({
       routeId: 'cits-bariga',
       driverId: 'driver-001',
@@ -123,7 +137,7 @@ describe('CheckIn', () => {
   });
 
   it('advances from on-route back to arrived at the destination', async () => {
-    mockVerifyDriver.mockResolvedValue({ driver_id: 'driver-001', name: 'Tunde Balogun' });
+    mockVerifyDriver.mockResolvedValue({ driver_id: 'driver-001', name: 'Tunde Balogun', custom_token: null });
     mockCheckIn.mockResolvedValueOnce({
       routeId: 'cits-bariga',
       driverId: 'driver-001',
@@ -154,7 +168,7 @@ describe('CheckIn', () => {
   });
 
   it('clears the live shuttle status when a checked-in driver signs out', async () => {
-    mockVerifyDriver.mockResolvedValue({ driver_id: 'driver-001', name: 'Tunde Balogun' });
+    mockVerifyDriver.mockResolvedValue({ driver_id: 'driver-001', name: 'Tunde Balogun', custom_token: null });
     mockCheckIn.mockResolvedValueOnce({
       routeId: 'cits-bariga',
       driverId: 'driver-001',
@@ -176,7 +190,7 @@ describe('CheckIn', () => {
   });
 
   it('does not attempt to clear a status that was never checked in', async () => {
-    mockVerifyDriver.mockResolvedValue({ driver_id: 'driver-001', name: 'Tunde Balogun' });
+    mockVerifyDriver.mockResolvedValue({ driver_id: 'driver-001', name: 'Tunde Balogun', custom_token: null });
     const user = userEvent.setup();
     render(<CheckIn />);
 
